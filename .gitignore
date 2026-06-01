@@ -1,0 +1,17 @@
+# Generated / large data artifacts — everything under data/ except the dir itself
+data/*
+!data/.gitkeep
+
+# Python virtualenv
+.venv/
+
+# Python caches
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Env / secrets
+.env
+
+# OS cruft
+.DS_Store
