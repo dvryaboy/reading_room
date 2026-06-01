@@ -19,10 +19,14 @@ Usage (run from the repo root):
     ./scripts/search.py --n 20 "property-based testing generator shrinking"
     ./scripts/search.py --chunks data/paper-chunks --db data/corpus.db "refinement types"
 
+Each hit prints the full chunk id (<paper>.pdf::N); feed it to
+`corpus.py show <id>` to read that chunk and its neighbors in context.
+
 Options:
     --db FILE        Path to corpus.db (default: <repo>/data/corpus.db)
     --chunks DIR     Directory of per-paper JSONL chunk files (default: <repo>/data/paper-chunks)
     --n N            Number of results to return (default: 10)
+    --full           Print whole chunks instead of 400-char snippets
     --model TEXT     OpenAI embedding model (default: text-embedding-3-small)
 """
 
@@ -151,18 +155,22 @@ def search(
 # Output formatting
 # ---------------------------------------------------------------------------
 
-def print_results(results: list[dict], query: str):
+def print_results(results: list[dict], query: str, full: bool = False):
     print(f"\nQuery: {query}")
     print(f"Top {len(results)} results:\n")
     for i, r in enumerate(results, 1):
         bar = "█" * int(r["score"] * 20)
         print(f"[{i:2d}] {r['score']:.3f} {bar}")
-        print(f"     {r['source']}")
-        # Show up to 400 chars of the chunk, clean whitespace
-        snippet = " ".join(r["text"].split())[:400]
-        if len(" ".join(r["text"].split())) > 400:
-            snippet += "…"
-        print(f"     {snippet}")
+        # Full chunk id (with ::N) — feed to `corpus.py show` to read in context
+        print(f"     {r['id']}")
+        if full:
+            for line in r["text"].splitlines():
+                print(f"     {line}")
+        else:
+            # Show up to 400 chars of the chunk, clean whitespace
+            cleaned = " ".join(r["text"].split())
+            snippet = cleaned[:400] + ("…" if len(cleaned) > 400 else "")
+            print(f"     {snippet}")
         print()
 
 
@@ -181,6 +189,8 @@ def main():
     parser.add_argument("--chunks", default=str(data_dir / "paper-chunks"),
                         help="Directory of per-paper JSONL chunk files")
     parser.add_argument("--n", type=int, default=10, help="Number of results")
+    parser.add_argument("--full", action="store_true",
+                        help="Print whole chunks instead of 400-char snippets")
     parser.add_argument("--model", default="text-embedding-3-small",
                         help="OpenAI embedding model")
     args = parser.parse_args()
@@ -195,7 +205,7 @@ def main():
         chunks_dir = Path("/dev/null")  # graceful degradation
 
     results = search(query, db_path, chunks_dir, args.n, args.model)
-    print_results(results, query)
+    print_results(results, query, full=args.full)
 
 
 if __name__ == "__main__":

@@ -16,6 +16,7 @@ Commands:
     extract     Extract text chunks from PDFs into data/paper-chunks/
     embed       Incrementally embed any chunks not yet in data/corpus.db
     search      Semantic search over the embedded corpus
+    show        Print a chunk (by id from search) plus its neighbors
     status      Show corpus stats (papers, chunks, embedded, not yet embedded)
 
 Usage (run from the repo root):
@@ -23,9 +24,11 @@ Usage (run from the repo root):
     ./scripts/corpus.py extract
     ./scripts/corpus.py embed
 
-    # Search
+    # Search (snippets), then expand a hit by its chunk id
     ./scripts/corpus.py search "incremental view maintenance"
     ./scripts/corpus.py search --n 20 "property-based testing generator shrinking"
+    ./scripts/corpus.py search --full "refinement types"   # whole chunks, not snippets
+    ./scripts/corpus.py show "Paper.pdf::7" --context 2     # a chunk + its neighbors
 
     # Add new papers: drop PDFs into data/papers/, then:
     ./scripts/corpus.py extract   # --resume is on by default; only new papers extracted
@@ -214,15 +217,17 @@ def cmd_search(args):
     print(f"\nQuery: {query}")
     print(f"Top {len(top)} results:\n")
     for i, (score, chunk_id) in enumerate(top, 1):
-        source = chunk_id.rsplit("::", 1)[0]
         text = chunk_index.get(chunk_id, "(text not in chunks dir)")
-        snippet = " ".join(text.split())[:400]
-        if len(" ".join(text.split())) > 400:
-            snippet += "…"
         bar = "█" * int(score * 20)
         print(f"[{i:2d}] {score:.3f} {bar}")
-        print(f"     {source}")
-        print(f"     {snippet}")
+        print(f"     {chunk_id}")
+        if args.full:
+            for line in text.splitlines():
+                print(f"     {line}")
+        else:
+            cleaned = " ".join(text.split())
+            snippet = cleaned[:400] + ("…" if len(cleaned) > 400 else "")
+            print(f"     {snippet}")
         print()
 
 
@@ -281,6 +286,48 @@ def cmd_status(args):
     print()
 
 
+def cmd_show(args):
+    """Print a chunk and its neighbors, identified by chunk id (<paper>.pdf::N)."""
+    chunk_id = args.id
+    source, sep, num = chunk_id.rpartition("::")
+    if not sep or not num.isdigit():
+        print(f"Error: id must look like '<paper>.pdf::N', got {chunk_id!r}", file=sys.stderr)
+        sys.exit(1)
+    target = int(num)
+
+    stem = source[:-4] if source.endswith(".pdf") else source
+    jsonl = CHUNKS_DIR / f"{stem}.jsonl"
+    if not jsonl.exists():
+        print(f"Error: chunk file not found: {jsonl}", file=sys.stderr)
+        sys.exit(1)
+
+    # Index this paper's chunks by their numeric suffix
+    chunks: dict[int, str] = {}
+    for line in jsonl.read_text(errors="replace").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        rec = json.loads(line)
+        chunks[int(rec["id"].rpartition("::")[2])] = rec["content"]
+
+    if target not in chunks:
+        print(f"Error: chunk {target} not in {jsonl.name} "
+              f"(paper has chunks {min(chunks)}–{max(chunks)})", file=sys.stderr)
+        sys.exit(1)
+
+    lo = max(min(chunks), target - args.context)
+    hi = min(max(chunks), target + args.context)
+    print(f"\nPaper: {source}")
+    print(f"Chunks {lo}–{hi} (match: {target})\n")
+    for n in range(lo, hi + 1):
+        if n not in chunks:
+            continue
+        marker = "  ◀── match" if n == target else ""
+        print(f"── {source}::{n}{marker} " + "─" * 20)
+        print(chunks[n])
+        print()
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -300,6 +347,13 @@ def main():
     p_search = sub.add_parser("search", help="Semantic search over the corpus")
     p_search.add_argument("query", nargs="+", help="Search query")
     p_search.add_argument("--n", type=int, default=SEARCH_N, help="Number of results")
+    p_search.add_argument("--full", action="store_true",
+                          help="Print whole chunks instead of 400-char snippets")
+
+    p_show = sub.add_parser("show", help="Print a chunk and its neighbors by id")
+    p_show.add_argument("id", help="Chunk id from search output, e.g. 'Paper.pdf::3'")
+    p_show.add_argument("--context", type=int, default=2,
+                        help="Neighbor chunks to show on each side (default: 2)")
 
     sub.add_parser("status", help="Show corpus statistics")
 
@@ -311,6 +365,8 @@ def main():
         cmd_embed(args)
     elif args.command == "search":
         cmd_search(args)
+    elif args.command == "show":
+        cmd_show(args)
     elif args.command == "status":
         cmd_status(args)
 
